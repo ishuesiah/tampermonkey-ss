@@ -1502,135 +1502,180 @@
     document.head.appendChild(style);
 
     // ========================================
-    // Main Fill Function with Enhanced HS Code Handling
+    // Main Fill Function with CORRECT DOM Structure
     // ========================================
-    function fillCustomsInformation() {
+    async function fillCustomsInformation() {
         console.log('========================================');
         console.log('[Fill Customs] Starting customs fill process');
         console.log('========================================');
 
         try {
-            // Find all item rows
+            // Step 1: Get all shipment items (to read SKUs and quantities)
             const itemRows = document.querySelectorAll('.react-table-body-row-icH4FVD');
-            console.log(`[Fill Customs] Found ${itemRows.length} item rows`);
+            console.log(`[Fill Customs] Found ${itemRows.length} shipment items`);
 
             if (itemRows.length === 0) {
                 showNotification('No items found to process', 'warning');
-                return;
+                return 0;
             }
 
-            let processedCount = 0;
+            // Extract item data from rows
+            const items = [];
+            itemRows.forEach((row, index) => {
+                const skuElement = row.querySelector('.item-sku-ONq0BTI');
+                const nameElement = row.querySelector('.item-name-E__ZAJW');
+
+                if (skuElement) {
+                    const skuText = skuElement.textContent.trim();
+                    const itemName = nameElement ? nameElement.textContent.trim() : '';
+
+                    console.log(`[Item ${index + 1}] SKU: "${skuText}", Name: "${itemName}"`);
+
+                    // Look up in database
+                    const customsData = CUSTOMS_DATABASE[skuText];
+                    if (customsData) {
+                        items.push({
+                            sku: skuText,
+                            name: itemName,
+                            description: customsData.description,
+                            tariffNo: customsData.tariff,
+                            country: customsData.country
+                        });
+                        console.log(`[Item ${index + 1}] Found in database:`, customsData);
+                    } else {
+                        console.log(`[Item ${index + 1}] SKU "${skuText}" not in database`);
+                    }
+                }
+            });
+
+            console.log(`[Fill Customs] Found ${items.length} items in database`);
+
+            if (items.length === 0) {
+                showNotification('No items found in CUSMA database', 'warning');
+                return 0;
+            }
+
+            // Step 2: Get existing customs declaration blocks
+            let declarationBlocks = document.querySelectorAll('.custom-declaration-qQ_1P6U');
+            console.log(`[Fill Customs] Found ${declarationBlocks.length} existing customs declarations`);
+
+            // Step 3: Create missing declarations if needed
+            const addButton = document.querySelector('.add-declaration-button-uXgAQNY');
+            if (declarationBlocks.length < items.length && addButton) {
+                const needed = items.length - declarationBlocks.length;
+                console.log(`[Fill Customs] Need to create ${needed} more declarations`);
+
+                for (let i = 0; i < needed; i++) {
+                    addButton.click();
+                    console.log(`[Fill Customs] Clicked "Add Declaration" button (${i + 1}/${needed})`);
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                }
+
+                // Re-query after adding
+                await new Promise(resolve => setTimeout(resolve, 500));
+                declarationBlocks = document.querySelectorAll('.custom-declaration-qQ_1P6U');
+                console.log(`[Fill Customs] Now have ${declarationBlocks.length} declarations`);
+            }
+
+            // Step 4: Fill each declaration block with corresponding item data
             let successCount = 0;
 
-            itemRows.forEach((row, index) => {
-                console.log(`\n--- Processing Row ${index + 1} ---`);
+            for (let i = 0; i < Math.min(items.length, declarationBlocks.length); i++) {
+                const item = items[i];
+                const block = declarationBlocks[i];
 
-                // Extract SKU from the row
-                const skuElement = row.querySelector('input[aria-label="SKU"]');
-                if (!skuElement) {
-                    console.log(`Row ${index + 1}: No SKU field found`);
-                    return;
-                }
+                console.log(`\n--- Processing Declaration ${i + 1} for SKU "${item.sku}" ---`);
 
-                const sku = skuElement.value.trim();
-                console.log(`Row ${index + 1}: SKU = "${sku}"`);
+                // Find input fields in this specific declaration block
+                const skuInput = block.querySelector('input[aria-label="SKU"]');
+                const descriptionInput = block.querySelector('input[aria-label="Description"]');
+                const harmonizationInput = block.querySelector('input[aria-label="Harmonization"]');
+                const quantityInput = block.querySelector('input[aria-label="Quantity"]');
+                const valueInput = block.querySelector('input[aria-label="Item Value(ea)"]');
 
-                if (!sku) {
-                    console.log(`Row ${index + 1}: SKU is empty, skipping`);
-                    return;
-                }
-
-                // Look up customs data
-                const customsData = CUSTOMS_DATABASE[sku];
-                if (!customsData) {
-                    console.log(`Row ${index + 1}: SKU "${sku}" not found in database`);
-                    showNotification(`SKU not found: ${sku}`, 'warning');
-                    return;
-                }
-
-                console.log(`Row ${index + 1}: Found customs data:`, customsData);
-                processedCount++;
-
-                // Find all input fields in this row
-                const descriptionInput = row.querySelector('input[aria-label="Description"]');
-                const harmonizationInput = row.querySelector('input[aria-label="Harmonization"]');
-                const priceInput = row.querySelector('input[aria-label="Item Value(ea)"]');
-                const quantityInput = row.querySelector('input[aria-label="Quantity"]');
-
-                console.log(`Row ${index + 1}: Found fields:`, {
+                console.log(`[Declaration ${i + 1}] Found fields:`, {
+                    sku: !!skuInput,
                     description: !!descriptionInput,
                     harmonization: !!harmonizationInput,
-                    price: !!priceInput,
-                    quantity: !!quantityInput
+                    quantity: !!quantityInput,
+                    value: !!valueInput
                 });
 
-                // Fill each field with enhanced handling
-                let rowSuccess = true;
+                let blockSuccess = true;
 
-                if (descriptionInput && !descriptionInput.value) {
-                    console.log(`Row ${index + 1}: Filling description`);
-                    if (!setReactInputValue(descriptionInput, customsData.description, `Row ${index + 1} Description`)) {
-                        rowSuccess = false;
+                // Fill SKU
+                if (skuInput) {
+                    const currentSku = skuInput.value.trim();
+                    if (!currentSku || currentSku !== item.sku) {
+                        console.log(`[Declaration ${i + 1}] Filling SKU: "${item.sku}"`);
+                        if (!setReactInputValue(skuInput, item.sku, `Declaration ${i + 1} SKU`)) {
+                            blockSuccess = false;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 200));
                     }
                 }
 
-                // CRITICAL: Enhanced HS Code filling with extra verification
-                if (harmonizationInput) {
-                    const currentHSCode = harmonizationInput.value;
-                    console.log(`Row ${index + 1}: HS Code current value: "${currentHSCode}"`);
-                    
-                    if (!currentHSCode || currentHSCode.trim() === '') {
-                        console.log(`Row ${index + 1}: HS Code is empty, filling with: "${customsData.tariff}"`);
-                        
-                        // Extra focus before setting HS code
-                        harmonizationInput.focus();
-                        
-                        if (!setReactInputValue(harmonizationInput, customsData.tariff, `Row ${index + 1} HS CODE`)) {
-                            rowSuccess = false;
+                // Fill Description - ALWAYS update to match CUSMA
+                if (descriptionInput) {
+                    const currentDesc = descriptionInput.value.trim();
+                    if (currentDesc !== item.description) {
+                        console.log(`[Declaration ${i + 1}] Updating description from "${currentDesc}" to "${item.description}"`);
+                        if (!setReactInputValue(descriptionInput, item.description, `Declaration ${i + 1} Description`)) {
+                            blockSuccess = false;
                         }
-                        
-                        // Visual highlight for HS code field
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                    } else {
+                        console.log(`[Declaration ${i + 1}] Description already correct`);
+                    }
+                }
+
+                // Fill Harmonization (HS Code) - CRITICAL FIX
+                if (harmonizationInput) {
+                    const currentHS = harmonizationInput.value.trim();
+                    if (currentHS !== item.tariffNo) {
+                        console.log(`[Declaration ${i + 1}] Updating HS Code from "${currentHS}" to "${item.tariffNo}"`);
+
+                        // Focus and highlight for visibility
+                        harmonizationInput.focus();
                         harmonizationInput.style.backgroundColor = '#ffeb3b';
+
+                        if (!setReactInputValue(harmonizationInput, item.tariffNo, `Declaration ${i + 1} HS CODE`)) {
+                            blockSuccess = false;
+                        }
+
+                        await new Promise(resolve => setTimeout(resolve, 200));
+
                         setTimeout(() => {
                             harmonizationInput.style.backgroundColor = '';
                         }, 2000);
                     } else {
-                        console.log(`Row ${index + 1}: HS Code already has value, skipping`);
+                        console.log(`[Declaration ${i + 1}] HS Code already correct`);
                     }
                 }
 
-                if (priceInput && !priceInput.value) {
-                    console.log(`Row ${index + 1}: Price field found but empty`);
-                    // Price is typically filled by user, so we just log it
-                }
-
-                if (quantityInput && !quantityInput.value) {
-                    console.log(`Row ${index + 1}: Quantity field found but empty`);
-                    // Quantity is typically filled by user, so we just log it
-                }
-
-                if (rowSuccess) {
+                if (blockSuccess) {
                     successCount++;
+                    console.log(`[Declaration ${i + 1}] Successfully filled`);
+                } else {
+                    console.log(`[Declaration ${i + 1}] Some fields failed to fill`);
                 }
-
-                console.log(`Row ${index + 1}: Processing complete`);
-            });
+            }
 
             console.log('========================================');
-            console.log(`[Fill Customs] Complete: ${successCount}/${processedCount} rows processed successfully`);
+            console.log(`[Fill Customs] Complete: ${successCount}/${items.length} declarations filled`);
             console.log('========================================');
 
             if (successCount > 0) {
-                showNotification(`Filled customs data for ${successCount} items`, 'success');
-            } else if (processedCount > 0) {
-                showNotification('No items needed customs data', 'info');
+                showNotification(`Filled ${successCount} customs declarations`, 'success');
+            } else {
+                showNotification('All declarations already correct', 'info');
             }
 
             return successCount;
 
         } catch (error) {
             console.error('[Fill Customs] Error:', error);
-            showNotification('Error filling customs data', 'error');
+            showNotification('Error filling customs data: ' + error.message, 'error');
             return 0;
         }
     }
@@ -1685,19 +1730,22 @@
         try {
             // Fill customs information
             console.log('[Auto Mode] Step 1: Filling customs data');
-            const filled = fillCustomsInformation();
-            
+            const filled = await fillCustomsInformation();
+
+            console.log(`[Auto Mode] Fill result: ${filled} declarations updated`);
+
             if (orderId) {
                 processedOrders.add(orderId);
                 console.log(`[Auto Mode] Marked order ${orderId} as processed`);
             }
 
-            // Wait 2 seconds before clicking next
+            // CRITICAL FIX: ALWAYS proceed to next order, even if filled = 0
+            // This fixes the issue where auto-mode stops when all fields are already correct
             console.log('[Auto Mode] Step 2: Waiting 2 seconds before next order...');
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            // Click next button
-            console.log('[Auto Mode] Step 3: Clicking next button');
+            // Click next button (always, regardless of whether we made changes)
+            console.log('[Auto Mode] Step 3: Proceeding to next order...');
             const clicked = clickNextButton();
 
             if (clicked) {
